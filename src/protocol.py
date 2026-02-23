@@ -3,7 +3,7 @@ import struct
 # protocol constants
 PAYLOAD_SIZE    = 1024 
 PACKET_SIZE     = PAYLOAD_SIZE + 16
-TIMEOUT         = 0.5               # 500 ms
+TIMEOUT         = 0.5 # 500 ms
 MAX_RETRIES     = 10
 
 # message types
@@ -13,7 +13,14 @@ MSG_ACK         = 0x02
 MSG_DATA        = 0x03
 MSG_FIN         = 0x04
 MSG_FIN_ACK     = 0x05
-MSG_ERROR         = 0x06
+MSG_ERROR       = 0x06
+
+# error codes
+ERR_FILE_NOT_FOUND  = 0x01
+ERR_BAD_REQUEST     = 0x02
+ERR_SESSION_MISMATCH= 0x03
+ERR_TIMEOUT_ABORT   = 0x04
+ERR_INTERNAL_ERROR  = 0x05
 
 # flags
 FLAG_NONE       = 0x00
