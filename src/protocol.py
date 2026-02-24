@@ -1,8 +1,8 @@
 import struct
 
 # protocol constants
-PAYLOAD_SIZE    = 1024 
-PACKET_SIZE     = PAYLOAD_SIZE + 16
+PAYLOAD_SIZE    = 1024 # mathematically, we can use until 1456 before mag ip fragmentation
+PACKET_SIZE     = PAYLOAD_SIZE + 16 # 1040 bytes
 TIMEOUT         = 0.5 # 500 ms
 MAX_RETRIES     = 10
 

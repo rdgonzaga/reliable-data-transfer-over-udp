@@ -89,22 +89,196 @@ def start_server():
         sock.close()
 
 def server_send_file(sock, client_addr, session_id, isn, filename):
-    # todo: 
-    # 1. open file in 'rb' mode
-    # 2. read chunks of PAYLOAD_SIZE
-    # 3. build MSG_DATA packets
-    # 4. wait for MSG_ACK, retransmit on timeout
-    # 5. send MSG_FIN when done
-    pass
+    print(f"[Transfer] Sending '{filename}' to {client_addr}...")
+    seq = isn
+
+    try:
+        # 1. open file in 'rb' mode to read raw bytes
+        with open(filename, "rb") as f:
+            # main loop
+            while True:
+                # 2. read chunks of PAYLOAD_SIZE
+                chunk = f.read(PAYLOAD_SIZE)
+                
+                # peek 1 byte ahead to see if this is the final chunk (EOF)
+                pos = f.tell()
+                nxt = f.read(1)
+                is_last = (nxt == b"")
+                f.seek(pos)
+
+                # 3. build msg_data packets
+                flags = FLAG_EOF if is_last else FLAG_NONE
+                data_pkt = build_packet(MSG_DATA, session_id, seq, 0, chunk, flags=flags)
+
+                # 4. stop and wait logic (sender side)
+                acked = False
+                # try and send the data packet up to 10 times
+                for attempt in range(1, MAX_RETRIES + 1):
+                    sock.sendto(data_pkt, client_addr)
+                    try:
+                        # wait for the client to reply with ack
+                        raw, _ = sock.recvfrom(PACKET_SIZE)
+                        p = parse_packet(raw)
+                    except socket.timeout:
+                        # if nagtime out, loop back and retransmit
+                        continue 
+                    except ValueError:
+                        # if may error yung parse packet, like too short or corrupted, drop it
+                        continue 
+
+                    # drop packets that is not for this transfer
+                    if p["session_id"] != session_id:
+                        continue
+
+                    # if client has an error, show error
+                    if p["type"] == MSG_ERROR:
+                        err = parse_err_payload(p["payload"])
+                        print(f"[-] Client sent ERROR {err['error_code']}: {err['msg']}")
+                        return # end na agad
+
+                    # wait for msg_ack matching our seq
+                    if p["type"] == MSG_ACK and p["ack"] == seq:
+                        acked = True
+                        break
+
+                # if it looped 10 times but never get an ack, abort transfer
+                if not acked:
+                    print("[-] MAX_RETRIES exceeded. Aborting transfer.")
+                    err_payload = build_err_payload(ERR_TIMEOUT_ABORT, "Timeout abort")
+                    err_pkt = build_packet(MSG_ERROR, session_id, 0, 0, err_payload)
+                    sock.sendto(err_pkt, client_addr)
+                    return
+
+                # increment seq for the next packet
+                seq += 1
+                
+                # stop sending if EOF
+                if is_last:
+                    break
+
+        # 5. teardown phase
+        print("[Teardown] File sent. Sending FIN...")
+        fin_pkt = build_packet(MSG_FIN, session_id, 0, 0)
+        
+        # try and send the fin packet up to 10 times
+        for attempt in range(1, MAX_RETRIES + 1):
+            sock.sendto(fin_pkt, client_addr)
+            try:
+                # wait for the client to reply with fin_ack
+                raw, _ = sock.recvfrom(PACKET_SIZE)
+                p = parse_packet(raw)
+                
+                # session over if nareceive na ng server yung fin_ack
+                if p["session_id"] == session_id and p["type"] == MSG_FIN_ACK:
+                    print(f"[OK] Transfer complete. FIN_ACK received from {client_addr}.")
+                    return
+            except (socket.timeout, ValueError, OSError):
+                continue 
+                
+        # if it looped 10 times but never get a fin_ack, just print a warning since sent na yung file
+        print("[-] Teardown timeout: No FIN_ACK received, but file was sent successfully.")
+
+    except Exception as e:
+        # error handling jic python crashed / system crashed
+        print(f"[-] Internal error during send: {e}")
+        err_pkt = build_packet(MSG_ERROR, session_id, 0, 0, build_err_payload(ERR_INTERNAL_ERROR, "Server fault"))
+        sock.sendto(err_pkt, client_addr)
 
 def server_receive_file(sock, client_addr, session_id, isn, filename):
-    # todo: 
-    # 1. open file in 'wb' mode
-    # 2. receive MSG_DATA packets
-    # 3. write payload to file, send MSG_ACK
-    # 4. handle duplicates or out-of-order packets
-    # 5. handle MSG_FIN and send MSG_FIN_ACK
-    pass
+    print(f"[Transfer] Receiving file to save as '{filename}'...")
+    expected = isn
+    last_acked = isn - 1  # sentinel: no packet ACKed yet; using isn-1 avoids false ACK match if isn=0
+
+    try:
+        # 1. open file in 'wb' mode
+        with open(filename, "wb") as f:
+            while True:
+                try:
+                    # 2. wait for incoming msg_data packets
+                    raw, _ = sock.recvfrom(PACKET_SIZE)
+                    p = parse_packet(raw)
+                except socket.timeout:
+                    # if nagtime out, do no thing, client dapat magreretransmit
+                    continue
+                except ValueError:
+                    # if may error yung parse packet, like too short or corrupted, drop it
+                    continue
+
+                # drop packets that is not for this transfer
+                if p["session_id"] != session_id:
+                    continue
+
+                # if client has an error, show error
+                if p["type"] == MSG_ERROR:
+                    err = parse_err_payload(p["payload"])
+                    print(f"[-] Client sent ERROR {err['error_code']}: {err['msg']}")
+                    return # end na agad
+
+                # 3. stop and wait logic
+                if p["type"] == MSG_DATA:
+                    seq = p["seq"]
+                    
+                    # first scenario, perfect packet
+                    if seq == expected:
+                        f.write(p["payload"])
+                        last_acked = seq
+                        expected += 1
+
+                        # build and send the ack packet
+                        ack_pkt = build_packet(MSG_ACK, session_id, 0, last_acked)
+                        sock.sendto(ack_pkt, client_addr)
+                        
+                        # stop receiving if EOF flag
+                        if (p["flags"] & FLAG_EOF) != 0:
+                            break
+                            
+                    # second scenario, if may duplicate packet
+                    elif seq < expected:
+                        # resend ack so alam ng client na safe na mag send ulit
+                        ack_pkt = build_packet(MSG_ACK, session_id, 0, last_acked)
+                        sock.sendto(ack_pkt, client_addr)
+                        
+                    # third scenario, out of order packet
+                    else:
+                        # ignore payload since we only accept in-order data and 
+                        # resend the ack for the last good packet
+                        ack_pkt = build_packet(MSG_ACK, session_id, 0, last_acked)
+                        sock.sendto(ack_pkt, client_addr)
+
+        # 6. teardown phase
+        print("[Teardown] File received. Sending FIN...")
+        fin_pkt = build_packet(MSG_FIN, session_id, 0, 0)
+        
+        # try and send the fin packet up to 10 times
+        for attempt in range(1, MAX_RETRIES + 1):
+            sock.sendto(fin_pkt, client_addr)
+            try:
+                # wait for the client to reply with fin_ack
+                raw, _ = sock.recvfrom(PACKET_SIZE)
+                p = parse_packet(raw)
+
+                # session over if nareceive na ng server yung fin_ack
+                if p["session_id"] == session_id and p["type"] == MSG_FIN_ACK:
+                    print(f"[OK] Transfer complete. File saved as '{filename}'.")
+                    return
+
+                # if client retransmits the last DATA (because our ACK was lost),
+                # re-ACK it so the client stops retransmitting and can receive our FIN
+                if p["session_id"] == session_id and p["type"] == MSG_DATA:
+                    ack_pkt = build_packet(MSG_ACK, session_id, 0, last_acked)
+                    sock.sendto(ack_pkt, client_addr)
+
+            except (socket.timeout, ValueError, OSError):
+                continue # if we timeout waiting for FIN_ACK, loop back and resend the FIN
+
+        # if it looped 10 times but never get a fin_ack, just print a warning since saved na yung file
+        print("[-] Teardown timeout: No FIN_ACK received, but file was saved successfully.")
+
+    except Exception as e:
+        # error handling jic python crashed / system crashed
+        print(f"[-] Internal error during receive: {e}")
+        err_pkt = build_packet(MSG_ERROR, session_id, 0, 0, build_err_payload(ERR_INTERNAL_ERROR, "Server fault"))
+        sock.sendto(err_pkt, client_addr)
 
 if __name__ == "__main__":
     start_server()
