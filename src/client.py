@@ -26,7 +26,7 @@ def handshake(sock: socket.socket, server_addr, op: int, filename: str, proposed
     for attempt in range(1, MAX_RETRIES + 1):
         sock.sendto(syn_pkt, server_addr)
         try:
-            # wdk server's negotiated chunk size yet, so we allow a big buffer.
+            # wdk server's negotiated 1 yet, so we allow a big buffer.
             p = recv_parsed(sock, HEADER_SIZE + max(proposed_chunk, 65535))
         except socket.timeout:
             continue
@@ -43,6 +43,14 @@ def handshake(sock: socket.socket, server_addr, op: int, filename: str, proposed
             return p["session_id"], syn_ack["chunk_size"], syn_ack["isn"]
 
     raise RuntimeError("Handshake failed: no SYN_ACK (timeout).")
+
+def send_error_best_effort(sock: socket.socket, addr, session_id: int, err_code: int, msg: str) -> None:
+    payload = build_err_payload(err_code, msg)
+    pkt = build_packet(MSG_ERROR, session_id, 0, 0, payload)
+    try:
+        sock.sendto(pkt, addr)
+    except OSError:
+        pass
 
 # GET = download: client asks for a remote file and writes received DATA payloads to disk
 def client_get(server_ip: str, port: int, remote_name: str, out_path: str, proposed_chunk: int):
@@ -77,7 +85,9 @@ def client_get(server_ip: str, port: int, remote_name: str, out_path: str, propo
 
             if p["session_id"] != session_id:
                 # protocol violation as per RFC
-                raise RuntimeError("Session mismatch detected.")
+                send_error_best_effort(sock, server_addr, p["session_id"], ERR_SESSION_MISMATCH, "SESSION_MISMATCH")
+                sock.close()
+                raise RuntimeError("Session mismatch detected (sent ERROR 0x03, aborting).")
 
             if p["type"] != MSG_DATA:
                 # if server ends transfer, it should send FIN.
@@ -152,13 +162,17 @@ def client_put(server_ip: str, port: int, local_path: str, remote_name: str, pro
                     raise RuntimeError(f"Server ERROR {err['error_code']}: {err['msg']}")
 
                 if p["session_id"] != session_id:
-                    raise RuntimeError("Session mismatch detected.")
+                    send_error_best_effort(sock, server_addr, p["session_id"], ERR_SESSION_MISMATCH, "SESSION_MISMATCH")
+                    sock.close()
+                    raise RuntimeError("Session mismatch detected (sent ERROR 0x03, aborting).")
 
                 # accept ACK only if it matches the seq we just sent
                 if p["type"] == MSG_ACK and p["ack"] == seq:
                     break
             else:
-                raise RuntimeError("Upload failed: MAX_RETRIES exceeded (timeout).")
+                send_error_best_effort(sock, server_addr, session_id, ERR_TIMEOUT_ABORT, "TIMEOUT_ABORT")
+                sock.close()
+                raise RuntimeError("Upload failed: MAX_RETRIES exceeded (sent ERROR 0x04, aborting).")
 
             seq += 1
             
