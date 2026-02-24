@@ -77,10 +77,10 @@ def start_server():
                 try:
                     if op == 0:
                         # GET: server sends file
-                        server_send_file(sock, client_addr, session_id, isn, filepath)
+                        server_send_file(sock, client_addr, session_id, isn, filepath, syn_ack_packet)
                     elif op == 1:
                         # PUT: server receives file
-                        server_receive_file(sock, client_addr, session_id, isn, filepath)
+                        server_receive_file(sock, client_addr, session_id, isn, filepath, syn_ack_packet)
                 except socket.timeout:
                     print("[-] Transfer timed out. Session dropped.")
                     err_payload = build_err_payload(ERR_TIMEOUT_ABORT, "Timeout abort")
@@ -93,7 +93,7 @@ def start_server():
     finally:
         sock.close()
 
-def server_send_file(sock, client_addr, session_id, isn, filepath):
+def server_send_file(sock, client_addr, session_id, isn, filepath, syn_ack_packet: bytes):
     print(f"[Transfer] Sending '{os.path.basename(filepath)}' to {client_addr}...")
     seq = isn
 
@@ -130,6 +130,12 @@ def server_send_file(sock, client_addr, session_id, isn, filepath):
                     except ValueError:
                         # if may error yung parse packet, like too short or corrupted, drop it
                         continue 
+
+                    # client may still resend SYN if SYN_ACK was dropped
+                    # keep resending SYN_ACK during teardown so the client can sync
+                    if p["type"] == MSG_SYN and p["session_id"] == 0:
+                        sock.sendto(syn_ack_packet, client_addr)
+                        continue
 
                     # drop packets that is not for this transfer
                     if p["session_id"] != session_id:
@@ -172,6 +178,12 @@ def server_send_file(sock, client_addr, session_id, isn, filepath):
                 # wait for the client to reply with fin_ack
                 raw, _ = sock.recvfrom(PACKET_SIZE)
                 p = parse_packet(raw)
+
+                # client may still resend SYN if SYN_ACK was dropped
+                # keep resending SYN_ACK during teardown so the client can sync
+                if p["type"] == MSG_SYN and p["session_id"] == 0:
+                    sock.sendto(syn_ack_packet, client_addr)
+                    continue
                 
                 # session over if nareceive na ng server yung fin_ack
                 if p["session_id"] == session_id and p["type"] == MSG_FIN_ACK:
@@ -189,10 +201,10 @@ def server_send_file(sock, client_addr, session_id, isn, filepath):
         err_pkt = build_packet(MSG_ERROR, session_id, 0, 0, build_err_payload(ERR_INTERNAL_ERROR, "Server fault"))
         sock.sendto(err_pkt, client_addr)
 
-def server_receive_file(sock, client_addr, session_id, isn, filepath):
+def server_receive_file(sock, client_addr, session_id, isn, filepath, syn_ack_packet: bytes):
     print(f"[Transfer] Receiving file to save as '{os.path.basename(filepath)}'...")
     expected = isn
-    last_acked = isn - 1  # sentinel: no packet ACKed yet; using isn-1 avoids false ACK match if isn=0
+    last_acked = (isn - 1) & 0xFFFFFFFF  # sentinel: no packet ACKed yet; using isn-1 avoids false ACK match if isn=0
 
     try:
         # 1. open file in 'wb' mode
@@ -207,6 +219,12 @@ def server_receive_file(sock, client_addr, session_id, isn, filepath):
                     continue
                 except ValueError:
                     # if may error yung parse packet, like too short or corrupted, drop it
+                    continue
+
+                # client may still resend SYN if SYN_ACK was dropped
+                # keep resending SYN_ACK during teardown so the client can sync
+                if p["type"] == MSG_SYN and p["session_id"] == 0:
+                    sock.sendto(syn_ack_packet, client_addr)
                     continue
 
                 # drop packets that is not for this transfer
@@ -261,6 +279,12 @@ def server_receive_file(sock, client_addr, session_id, isn, filepath):
                 # wait for the client to reply with fin_ack
                 raw, _ = sock.recvfrom(PACKET_SIZE)
                 p = parse_packet(raw)
+
+                # client may still resend SYN if SYN_ACK was dropped
+                # keep resending SYN_ACK during teardown so the client can sync
+                if p["type"] == MSG_SYN and p["session_id"] == 0:
+                    sock.sendto(syn_ack_packet, client_addr)
+                    continue
 
                 # session over if nareceive na ng server yung fin_ack
                 if p["session_id"] == session_id and p["type"] == MSG_FIN_ACK:
