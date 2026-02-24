@@ -3,6 +3,10 @@ import socket
 import sys
 from protocol import *  # imports packet builders/parsers + constants like TIMEOUT/MAX_RETRIES/etc.
 
+CLIENT_DIR = "client_files"
+if not os.path.exists(CLIENT_DIR):
+    os.makedirs(CLIENT_DIR)
+
 # op codes used in the SYN payload (per RFC)
 OP_GET = 0x00
 OP_PUT = 0x01
@@ -124,9 +128,7 @@ def client_put(server_ip: str, port: int, local_path: str, remote_name: str, pro
 
     with open(local_path, "rb") as f:
         while True:
-            chunk = f.read(chunk_size)                                   # read one "packet payload" worth
-            if chunk == b"":
-                break                                                    # reached EOF
+            chunk = f.read(chunk_size)                                   # read one "packet payload" worth                                
 
             # check if last chunk (peek 1 byte ahead)
             pos = f.tell()
@@ -159,13 +161,17 @@ def client_put(server_ip: str, port: int, local_path: str, remote_name: str, pro
                 raise RuntimeError("Upload failed: MAX_RETRIES exceeded (timeout).")
 
             seq += 1
+            
+            # break here after the EOF packet is successfully sent and ACKed
+            if is_last:
+                break
 
-    # wait for FIN then reply FIN_ACK
-    while True:
+    # bounded loop for FIN wait
+    for attempt in range(MAX_RETRIES * 10):
         try:
             p = recv_parsed(sock, max_packet)
         except socket.timeout:
-            continue                                                    # keep waiting for FIN
+            continue                                                    
 
         if p["type"] == MSG_FIN and p["session_id"] == session_id:
             fin_ack = build_packet(MSG_FIN_ACK, session_id, 0, 0)
@@ -175,6 +181,8 @@ def client_put(server_ip: str, port: int, local_path: str, remote_name: str, pro
         if p["type"] == MSG_ERROR:
             err = parse_err_payload(p["payload"])
             raise RuntimeError(f"Server ERROR {err['error_code']}: {err['msg']}")
+    else:
+        print("[-] Server FIN wait timed out, but upload was likely successful.")
 
     sock.close()
     print(f"[OK] Upload complete: '{local_path}' sent.")
@@ -232,8 +240,8 @@ def main():
                 filename = parts[1]
                 chunk = int(parts[2]) if len(parts) == 3 else PAYLOAD_SIZE
 
-                # save using same filename by default
-                out_path = os.path.basename(filename)
+                # routed to client dir
+                out_path = os.path.join(CLIENT_DIR, os.path.basename(filename))
 
                 client_get(ip, port, filename, out_path, chunk)
 
@@ -243,7 +251,14 @@ def main():
                     print("Usage: put <filename> [chunk]")
                     continue
 
-                local_path = parts[1]
+                # routed to client dir
+                local_path = os.path.join(CLIENT_DIR, parts[1])
+                
+                # check if file exists before trying to upload
+                if not os.path.exists(local_path):
+                    print(f"[ERROR] '{parts[1]}' not found in {CLIENT_DIR}/")
+                    continue
+
                 chunk = int(parts[2]) if len(parts) == 3 else PAYLOAD_SIZE
 
                 # remote name defaults to basename (so "folder/a.txt" becomes "a.txt" remotely)
