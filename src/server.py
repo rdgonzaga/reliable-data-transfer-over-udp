@@ -1,5 +1,4 @@
 # logic:
-
 # 1. nakalisten state yung server
 # 2. pag dumating yung syn, parse payload to check if get or put 
 #   2.1 pag get and file is missing, sends an error
@@ -11,6 +10,9 @@ import random
 from protocol import *
 
 SERVER_ADDR = ('127.0.0.1', 8080)
+SERVER_DIR = "server_files"
+if not os.path.exists(SERVER_DIR):
+    os.makedirs(SERVER_DIR)
 
 active_sessions = set()  # track active session_ids to avoid collisions
 
@@ -43,19 +45,22 @@ def start_server():
                     continue  # drop malformed SYN payloads
 
                 op = syn_data['op']
-                filename = syn_data['filename']
+                
+                # ensure the file stays inside server_dir
+                safe_filename = os.path.basename(syn_data['filename'])
+                filepath = os.path.join(SERVER_DIR, safe_filename)
 
-                print(f"\n[!] Received SYN from {client_addr}: OP={'PUT' if op == 1 else 'GET'}, File={filename}")
+                print(f"\n[!] Received SYN from {client_addr}: OP={'PUT' if op == 1 else 'GET'}, File={safe_filename}")
 
                 # check if file exists for get requests
-                if op == 0 and not os.path.exists(filename):
-                    print(f"[-] File '{filename}' not found. Sending ERROR.")
+                if op == 0 and not os.path.exists(filepath):
+                    print(f"[-] File '{safe_filename}' not found in {SERVER_DIR}/. Sending ERROR.")
                     err_payload = build_err_payload(0x01, "File not found")
                     err_packet = build_packet(MSG_ERROR, 0, 0, 0, err_payload)
                     sock.sendto(err_packet, client_addr)
                     continue
 
-               # handshake state — generate unique session_id and ISN
+                # handshake state — generate unique session_id and ISN
                 session_id = generate_session_id()
                 isn = random.randint(0, 2**32 - 1)
                 active_sessions.add(session_id)
@@ -72,10 +77,10 @@ def start_server():
                 try:
                     if op == 0:
                         # GET: server sends file
-                        server_send_file(sock, client_addr, session_id, isn, filename)
+                        server_send_file(sock, client_addr, session_id, isn, filepath)
                     elif op == 1:
                         # PUT: server receives file
-                        server_receive_file(sock, client_addr, session_id, isn, filename)
+                        server_receive_file(sock, client_addr, session_id, isn, filepath)
                 except socket.timeout:
                     print("[-] Transfer timed out. Session dropped.")
                     err_payload = build_err_payload(ERR_TIMEOUT_ABORT, "Timeout abort")
@@ -88,13 +93,13 @@ def start_server():
     finally:
         sock.close()
 
-def server_send_file(sock, client_addr, session_id, isn, filename):
-    print(f"[Transfer] Sending '{filename}' to {client_addr}...")
+def server_send_file(sock, client_addr, session_id, isn, filepath):
+    print(f"[Transfer] Sending '{os.path.basename(filepath)}' to {client_addr}...")
     seq = isn
 
     try:
         # 1. open file in 'rb' mode to read raw bytes
-        with open(filename, "rb") as f:
+        with open(filepath, "rb") as f:
             # main loop
             while True:
                 # 2. read chunks of PAYLOAD_SIZE
@@ -184,14 +189,14 @@ def server_send_file(sock, client_addr, session_id, isn, filename):
         err_pkt = build_packet(MSG_ERROR, session_id, 0, 0, build_err_payload(ERR_INTERNAL_ERROR, "Server fault"))
         sock.sendto(err_pkt, client_addr)
 
-def server_receive_file(sock, client_addr, session_id, isn, filename):
-    print(f"[Transfer] Receiving file to save as '{filename}'...")
+def server_receive_file(sock, client_addr, session_id, isn, filepath):
+    print(f"[Transfer] Receiving file to save as '{os.path.basename(filepath)}'...")
     expected = isn
     last_acked = isn - 1  # sentinel: no packet ACKed yet; using isn-1 avoids false ACK match if isn=0
 
     try:
         # 1. open file in 'wb' mode
-        with open(filename, "wb") as f:
+        with open(filepath, "wb") as f:
             while True:
                 try:
                     # 2. wait for incoming msg_data packets
@@ -259,7 +264,7 @@ def server_receive_file(sock, client_addr, session_id, isn, filename):
 
                 # session over if nareceive na ng server yung fin_ack
                 if p["session_id"] == session_id and p["type"] == MSG_FIN_ACK:
-                    print(f"[OK] Transfer complete. File saved as '{filename}'.")
+                    print(f"[OK] Transfer complete. File saved as '{os.path.basename(filepath)}'.")
                     return
 
                 # if client retransmits the last DATA (because our ACK was lost),
