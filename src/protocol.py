@@ -52,8 +52,6 @@ def build_packet(msg_type: int, session_id: int, seq: int, ack: int,
 def parse_packet(raw: bytes) -> dict:
     if len(raw) < HEADER_SIZE:
         raise ValueError(f"Packet is too short: {len(raw)} bytes")
-    if len(raw) < HEADER_SIZE + payload_len:
-        raise ValueError("BAD_REQUEST: payload length mismatch")
     
     msg_type, flags, session_id, seq, ack, payload_len = struct.unpack(
         HEADER_FORMAT, raw[:HEADER_SIZE]
