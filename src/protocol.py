@@ -1,9 +1,9 @@
 import struct
 
 # protocol constants
-PAYLOAD_SIZE    = 1024 # mathematically, we can use until 1456 before mag ip fragmentation
+PAYLOAD_SIZE    = 1024              # mathematically, we can use until 1456 before mag ip fragmentation
 PACKET_SIZE     = PAYLOAD_SIZE + 16 # 1040 bytes
-TIMEOUT         = 0.5 # 500 ms
+TIMEOUT         = 0.5               # 500 ms
 MAX_RETRIES     = 10
 
 # message types
@@ -101,7 +101,7 @@ def parse_syn_ack_payload(payload: bytes) -> dict:
     status, chunk_size, isn = struct.unpack(SYN_ACK_PAYLOAD_FORMAT, payload[:7])
     return {'status': status, 'chunk_size': chunk_size, 'isn': isn}
 
-# just makes the types a string for easier readability sa terminal
+# makes the message types a string for easier readability in the terminal
 def type_to_str(msg_type: int) -> str:
     names = {
         MSG_SYN:     'SYN',
