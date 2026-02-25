@@ -263,19 +263,27 @@ def server_receive_file(sock, client_addr, session_id, isn, filepath, syn_ack_pa
     try:
         with open(filepath, "wb") as f:
             while True:
-                try:
-                    # wait for incoming packets
-                    raw, _ = sock.recvfrom(PACKET_SIZE)
-                    p = parse_packet(raw)
-                except socket.timeout:
+                p = None
+                for attempt in range(1, MAX_RETRIES + 1):
                     if VERBOSE:
-                        print(f"    [RETRY] Timeout on seq={seq}, retransmitting...")
-                    # timeout: client should retransmit
-                    continue
+                        print(f"    [RECV] Receiving DATA seq={expected}, attempt {attempt}/{MAX_RETRIES}")
+                    try:
+                        # wait for incoming packets
+                        raw, _ = sock.recvfrom(PACKET_SIZE)
+                        p = parse_packet(raw)
+                        break
+                    except socket.timeout:
+                        if VERBOSE:
+                            print(f"    [RETRY] Timeout on seq={expected}, attempt {attempt}/{MAX_RETRIES}")
+                        continue
+                    except ValueError:
+                        send_bad_request(sock, client_addr)
+                        continue
 
-                except ValueError:
-                    send_bad_request(sock, client_addr)
-                    continue
+                if p is None:
+                    print("[-] MAX_RETRIES exceeded while receiving. Aborting transfer.")
+                    send_timeout_abort(sock, client_addr, session_id)
+                    return
 
                 if p["type"] == MSG_SYN and p["session_id"] == 0:
                     sock.sendto(syn_ack_packet, client_addr)
