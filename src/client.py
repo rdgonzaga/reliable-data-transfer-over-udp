@@ -117,7 +117,7 @@ def client_get(server_ip: str, port: int, remote_name: str, out_path: str, propo
                 sock.sendto(ack_pkt, server_addr)
 
     sock.close()
-    print(f"[OK] Download complete: '{out_path}' saved.")
+    print(f"[OK] Download complete: '{out_path}' saved.\n")
 
 # PUT = upload: client reads local file, sends DATA chunks one at a time, waiting for ACK each time.
 def client_put(server_ip: str, port: int, local_path: str, remote_name: str, proposed_chunk: int):
@@ -196,7 +196,7 @@ def client_put(server_ip: str, port: int, local_path: str, remote_name: str, pro
         print("[-] Server FIN wait timed out, but upload was likely successful.")
 
     sock.close()
-    print(f"[OK] Upload complete: '{local_path}' sent.")
+    print(f"[OK] Upload complete: '{local_path}' sent.\n")
 
 def _print_help():
     print("Type commands like:\n")
