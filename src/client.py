@@ -84,7 +84,7 @@ def client_get(server_ip: str, port: int, remote_name: str, out_path: str, propo
                 # protocol violation as per RFC
                 send_error_best_effort(sock, server_addr, p["session_id"], ERR_SESSION_MISMATCH, "SESSION_MISMATCH")
                 sock.close()
-                raise RuntimeError("Session mismatch detected (sent ERROR 0x03, aborting).")
+                raise RuntimeError("SESSION_MISMATCH")
 
             if p["type"] != MSG_DATA:
                 # if server ends transfer, it should send FIN.
@@ -161,7 +161,7 @@ def client_put(server_ip: str, port: int, local_path: str, remote_name: str, pro
                 if p["session_id"] != session_id:
                     send_error_best_effort(sock, server_addr, p["session_id"], ERR_SESSION_MISMATCH, "SESSION_MISMATCH")
                     sock.close()
-                    raise RuntimeError("Session mismatch detected (sent ERROR 0x03, aborting).")
+                    raise RuntimeError("SESSION_MISMATCH")
 
                 # accept ACK only if it matches the seq we just sent
                 if p["type"] == MSG_ACK and p["ack"] == seq:
@@ -169,7 +169,7 @@ def client_put(server_ip: str, port: int, local_path: str, remote_name: str, pro
             else:
                 send_error_best_effort(sock, server_addr, session_id, ERR_TIMEOUT_ABORT, "TIMEOUT_ABORT")
                 sock.close()
-                raise RuntimeError("Upload failed: MAX_RETRIES exceeded (sent ERROR 0x04, aborting).")
+                raise RuntimeError("TIMEOUT_ABORT")
 
             seq += 1
             

@@ -101,7 +101,7 @@ def start_server():
                 # for get requests, return an error if the file does not exist
                 if op == 0 and not os.path.exists(filepath):
                     print(f"[-] File '{safe_filename}' not found in {SERVER_DIR}/. Sending ERROR.")
-                    err_payload = build_err_payload(0x01, "File not found")
+                    err_payload = build_err_payload(ERR_FILE_NOT_FOUND, "FILE_NOT_FOUND")
                     err_packet = build_packet(MSG_ERROR, 0, 0, 0, err_payload)
                     sock.sendto(err_packet, client_addr)
                     continue
