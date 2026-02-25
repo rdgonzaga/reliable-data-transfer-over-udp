@@ -33,9 +33,9 @@ def send_timeout_abort(sock, client_addr, session_id):
     sock.sendto(err_pkt, client_addr)
 
 # send an ack for the given sequence number
-def send_ack(sock, client_addr, session_id, seq):
+def send_ack(sock, client_addr, session_id, seq, force_send: bool = False):
     ack_pkt = build_packet(MSG_ACK, session_id, 0, seq)
-    if SIMULATE_LOSS and random.random() < LOSS_RATE:
+    if (not force_send) and SIMULATE_LOSS and random.random() < LOSS_RATE:
         print(f"    [TEST] Intentionally dropped ACK {seq} to trigger retransmission.")
         return
     sock.sendto(ack_pkt, client_addr)
@@ -311,12 +311,14 @@ def server_receive_file(sock, client_addr, session_id, isn, filepath, syn_ack_pa
                         f.write(p["payload"])
                         last_acked = seq
                         expected += 1
-                        send_ack(sock, client_addr, session_id, last_acked)
 
                         if (p["flags"] & FLAG_EOF) != 0:
+                            send_ack(sock, client_addr, session_id, last_acked, force_send=True)
                             if VERBOSE:
-                                print(f"    [EOF] FLAG_EOF received at seq={seq}, stopping receive loop.")
+                                print(f"    [EOF] FLAG_EOF received at seq={seq}, final ACK sent, entering teardown.")
                             break
+                        else:
+                            send_ack(sock, client_addr, session_id, last_acked)
                             
                     # for duplicate packet: re-ack last accepted sequence number
                     elif seq < expected:
