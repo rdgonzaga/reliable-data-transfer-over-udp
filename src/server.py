@@ -158,6 +158,8 @@ def server_send_file(sock, client_addr, session_id, isn, filepath, syn_ack_packe
                 acked = False
                 # retry send ACK up to 10 times
                 for attempt in range(1, MAX_RETRIES + 1):
+                    if VERBOSE:
+                        print(f"    [Retry] Sending DATA seq={seq}, attempt {attempt}/{MAX_RETRIES}")
                     sock.sendto(data_pkt, client_addr)
                     try:
                         # wait for ACK
@@ -165,6 +167,8 @@ def server_send_file(sock, client_addr, session_id, isn, filepath, syn_ack_packe
                         p = parse_packet(raw)
                     except socket.timeout:
                         # if timeout: retransmit current DATA packet
+                        if VERBOSE:
+                            print(f"    [Retry] Timeout on seq={seq}, retransmitting...")
                         continue 
                     except ValueError:
                         send_bad_request(sock, client_addr)
@@ -212,6 +216,8 @@ def server_send_file(sock, client_addr, session_id, isn, filepath, syn_ack_packe
         
         # retry FIN up to MAX_RETRIES times
         for attempt in range(1, MAX_RETRIES + 1):
+            if VERBOSE:
+                print(f"    [Retry] Sending FIN, attempt {attempt}/{MAX_RETRIES}")
             sock.sendto(fin_pkt, client_addr)
             try:
                 # wait for FIN_ACK
@@ -308,6 +314,8 @@ def server_receive_file(sock, client_addr, session_id, isn, filepath, syn_ack_pa
         
         # retry FIN up to 10 times
         for attempt in range(1, MAX_RETRIES + 1):
+            if VERBOSE:
+                print(f"    [Retry] Sending FIN, attempt {attempt}/{MAX_RETRIES}")
             sock.sendto(fin_pkt, client_addr)
             try:
                 # wait for FIN_ACK
