@@ -9,7 +9,7 @@ import os
 import random
 from protocol import *
 
-SERVER_ADDR = ('127.0.0.1', 8080)
+# SERVER_ADDR = ('127.0.0.1', 8080)
 SERVER_DIR = "server_files"
 if not os.path.exists(SERVER_DIR):
     os.makedirs(SERVER_DIR)
@@ -24,10 +24,23 @@ def generate_session_id():
             return session_id
 
 def start_server():
+    print("--- Server Startup ---")
+    print("1. Localhost only (127.0.0.1)")
+    print("2. Network (0.0.0.0 - accessible to other devices)")
+    choice = input("Select binding mode (1 or 2): ").strip()
+    
+    bind_ip = '0.0.0.0' if choice == '2' else '127.0.0.1'
+    port = 8080
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind(SERVER_ADDR)
-    print(f"Server listening on {SERVER_ADDR[0]}:{SERVER_ADDR[1]}...")
+    sock.bind((bind_ip, port))
+    if bind_ip == '0.0.0.0':
+        local_ip = socket.gethostbyname(socket.gethostname())
+        print(f"\nServer listening on {bind_ip}:{port}...")
+        print(f"[*] Clients on your network should connect to: {local_ip}:{port}")
+    else:
+        print(f"\nServer listening on {bind_ip}:{port}...")
 
     try:
         while True:
