@@ -6,7 +6,7 @@ from protocol import *
 
 VERBOSE = False         # for verbose logging mode
 SIMULATE_LOSS = False   # for timeout test
-LOSS_RATE = 0.50     
+LOSS_RATE = 0.2     
 
 SERVER_DIR = "server_files"
 if not os.path.exists(SERVER_DIR):
@@ -48,7 +48,7 @@ def generate_session_id():
             return session_id
 
 def start_server():
-    global VERBOSE, SIMULATE_LOSS
+    global VERBOSE, SIMULATE_LOSS, LOSS_RATE
 
     print("Server startup:")
     print("    1. Localhost only (127.0.0.1)")
@@ -70,11 +70,16 @@ def start_server():
         print(f"\nServer listening on {bind_ip}:{port}...")
         print(f"[*] Clients on your network should connect to: {local_ip}:{port}")
     else:
+        if SIMULATE_LOSS:
+            try:
+                LOSS_RATE = float(input("Enter loss rate (0 - 1.0): ").strip())
+                LOSS_RATE = max(0.0, min(1.0, LOSS_RATE))
+                print(f"[TEST] Packet loss simulation enabled (LOSS_RATE={LOSS_RATE:.0%})")
+            except ValueError:
+                LOSS_RATE = 0.2
+                print("[!] Invalid loss rate, defaulting to 0.2")
         print(f"\nServer listening on {bind_ip}:{port}...")
-
-    if SIMULATE_LOSS:
-        print(f"[TEST] Packet loss simulation enabled (LOSS_RATE={LOSS_RATE:.0%})")
-
+  
     try:
         while True:
             # wait for incoming packets
@@ -263,6 +268,8 @@ def server_receive_file(sock, client_addr, session_id, isn, filepath, syn_ack_pa
                     raw, _ = sock.recvfrom(PACKET_SIZE)
                     p = parse_packet(raw)
                 except socket.timeout:
+                    if VERBOSE:
+                        print(f"    [RETRY] Timeout on seq={seq}, retransmitting...")
                     # timeout: client should retransmit
                     continue
 
