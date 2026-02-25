@@ -57,6 +57,14 @@ def start_server():
     choice = input("Select binding mode (1 or 2): ").strip()
     VERBOSE = input("Enable verbose logging? (y/n): ").strip().lower() == 'y'
     SIMULATE_LOSS = input("Enable reliability test mode? (y/n): ").strip().lower() == 'y'
+    if SIMULATE_LOSS:
+        try:
+            LOSS_RATE = float(input("Enter loss rate (0 - 1.0): ").strip())
+            LOSS_RATE = max(0.0, min(1.0, LOSS_RATE))
+            print(f"[TEST] Packet loss simulation enabled (LOSS_RATE={LOSS_RATE:.0%})")
+        except ValueError:
+            LOSS_RATE = 0.2
+            print("[!] Invalid loss rate, defaulting to 0.2")
     
     # bind to all network interfaces for LAN access, or loopback for local-only access
     bind_ip = '0.0.0.0' if choice == '2' else '127.0.0.1'
@@ -70,14 +78,6 @@ def start_server():
         print(f"\nServer listening on {bind_ip}:{port}...")
         print(f"[*] Clients on your network should connect to: {local_ip}:{port}")
     else:
-        if SIMULATE_LOSS:
-            try:
-                LOSS_RATE = float(input("Enter loss rate (0 - 1.0): ").strip())
-                LOSS_RATE = max(0.0, min(1.0, LOSS_RATE))
-                print(f"[TEST] Packet loss simulation enabled (LOSS_RATE={LOSS_RATE:.0%})")
-            except ValueError:
-                LOSS_RATE = 0.2
-                print("[!] Invalid loss rate, defaulting to 0.2")
         print(f"\nServer listening on {bind_ip}:{port}...")
   
     try:
@@ -181,7 +181,7 @@ def server_send_file(sock, client_addr, session_id, isn, filepath, syn_ack_packe
                         p = parse_packet(raw)
                     except socket.timeout:
                         if VERBOSE:
-                            print(f"    [RETRY] Timeout on seq={seq}, retransmitting...")
+                            print(f"    [RETRY] Timeout on seq={seq}, attempt {attempt}/{MAX_RETRIES}")
                         continue 
                     except ValueError:
                         send_bad_request(sock, client_addr)
