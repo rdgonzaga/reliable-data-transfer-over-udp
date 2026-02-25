@@ -4,7 +4,9 @@ import random
 import time
 from protocol import *
 
-VERBOSE = False  
+VERBOSE = False         # for verbose logging mode
+SIMULATE_LOSS = False   # for timeout test
+LOSS_RATE = 0.50     
 
 SERVER_DIR = "server_files"
 if not os.path.exists(SERVER_DIR):
@@ -27,12 +29,15 @@ def send_session_mismatch(sock, client_addr, wrong_session_id):
 # send a timeout-abort error for the given session
 def send_timeout_abort(sock, client_addr, session_id):
     err_pkt = build_packet(MSG_ERROR, session_id, 0, 0,
-                           build_err_payload(ERR_TIMEOUT_ABORT, "Timeout abort"))
+                           build_err_payload(ERR_TIMEOUT_ABORT, "TIMEOUT_ABORT"))
     sock.sendto(err_pkt, client_addr)
 
 # send an ack for the given sequence number
 def send_ack(sock, client_addr, session_id, seq):
     ack_pkt = build_packet(MSG_ACK, session_id, 0, seq)
+    if SIMULATE_LOSS and random.random() < LOSS_RATE:
+        print(f"    [TEST] Intentionally dropped ACK {seq} to trigger retransmission.")
+        return
     sock.sendto(ack_pkt, client_addr)
 
 # generate a unique session ID that is not currently active
@@ -43,12 +48,15 @@ def generate_session_id():
             return session_id
 
 def start_server():
-    global VERBOSE
+    global VERBOSE, SIMULATE_LOSS
+
     print("Server startup:")
     print("    1. Localhost only (127.0.0.1)")
     print("    2. Local Network (0.0.0.0)")
+    
     choice = input("Select binding mode (1 or 2): ").strip()
     VERBOSE = input("Enable verbose logging? (y/n): ").strip().lower() == 'y'
+    SIMULATE_LOSS = input("Enable reliability test mode? (y/n): ").strip().lower() == 'y'
     
     # bind to all network interfaces for LAN access, or loopback for local-only access
     bind_ip = '0.0.0.0' if choice == '2' else '127.0.0.1'
@@ -63,6 +71,9 @@ def start_server():
         print(f"[*] Clients on your network should connect to: {local_ip}:{port}")
     else:
         print(f"\nServer listening on {bind_ip}:{port}...")
+
+    if SIMULATE_LOSS:
+        print(f"[TEST] Packet loss simulation enabled (LOSS_RATE={LOSS_RATE:.0%})")
 
     try:
         while True:
@@ -82,7 +93,6 @@ def start_server():
 
                 op = syn_data['op']
                 
-                # keep file paths inside SERVER_DIR
                 safe_filename = os.path.basename(syn_data['filename'])
                 filepath = os.path.join(SERVER_DIR, safe_filename)
 
@@ -96,9 +106,9 @@ def start_server():
                     sock.sendto(err_packet, client_addr)
                     continue
 
-                # handshake: create unique session_id and initial sequence number 
+                # for handshake: create unique session_id and initial sequence number 
                 session_id = generate_session_id()
-                isn = int(time.time()) % (2**32)  # time-based isn
+                isn = int(time.time()) % (2**32)  
                 active_sessions.add(session_id)
 
                 syn_ack_payload = build_syn_ack_payload(0x00, PAYLOAD_SIZE, isn)
@@ -115,10 +125,8 @@ def start_server():
                 sock.settimeout(TIMEOUT)
                 try:
                     if op == 0:
-                        # GET: server sends file
                         server_send_file(sock, client_addr, session_id, isn, filepath, syn_ack_packet)
                     elif op == 1:
-                        # PUT: server receives file
                         server_receive_file(sock, client_addr, session_id, isn, filepath, syn_ack_packet)
                 except socket.timeout:
                     print("[-] Transfer timed out. Session dropped.")
@@ -137,38 +145,36 @@ def server_send_file(sock, client_addr, session_id, isn, filepath, syn_ack_packe
     seq = isn
 
     try:
-        # open file in binary read mode
         with open(filepath, "rb") as f:
-            # main send loop
             while True:
-                # read one payload-sized chunk.
                 chunk = f.read(PAYLOAD_SIZE)
                 
-                # peek ahead to detect whether this chunk is the last one (look for eof)
+                # peek ahead to detect whether the next chunk is the last one
                 pos = f.tell()
                 nxt = f.read(1)
                 is_last = (nxt == b"")
                 f.seek(pos)
 
-                # build DATA packet and mark EOF on the final chunk
+                # build data packet and mark eof on the final chunk
                 flags = FLAG_EOF if is_last else FLAG_NONE
                 if VERBOSE and is_last:
                     print(f"    [EOF] Final chunk at seq={seq}, FLAG_EOF set.")
                 data_pkt = build_packet(MSG_DATA, session_id, seq, 0, chunk, flags=flags)
 
-                # stop and wait logic: send one DATA packet and wait for matching ACK
+                # stop and wait logic: send one data packet and wait for matching ack
                 acked = False
-                # retry send ACK up to 10 times
+
                 for attempt in range(1, MAX_RETRIES + 1):
                     if VERBOSE:
                         print(f"    [SEND] Sending DATA seq={seq}, attempt {attempt}/{MAX_RETRIES}")
-                    sock.sendto(data_pkt, client_addr)
+                    if SIMULATE_LOSS and random.random() < LOSS_RATE:
+                        print(f"    [TEST] Intentionally dropped DATA {seq} to trigger timeout.")
+                    else:
+                        sock.sendto(data_pkt, client_addr)
                     try:
-                        # wait for ACK
                         raw, _ = sock.recvfrom(PACKET_SIZE)
                         p = parse_packet(raw)
                     except socket.timeout:
-                        # if timeout: retransmit current DATA packet
                         if VERBOSE:
                             print(f"    [RETRY] Timeout on seq={seq}, retransmitting...")
                         continue 
@@ -176,7 +182,7 @@ def server_send_file(sock, client_addr, session_id, isn, filepath, syn_ack_packe
                         send_bad_request(sock, client_addr)
                         continue
 
-                    # client may resend SYN if SYN_ACK was lost, so reply with SYN_ACK again
+                    # client may resend syn if syn_ack was lost, so reply with syn_ack again
                     if p["type"] == MSG_SYN and p["session_id"] == 0:
                         sock.sendto(syn_ack_packet, client_addr)
                         continue
@@ -192,46 +198,42 @@ def server_send_file(sock, client_addr, session_id, isn, filepath, syn_ack_packe
                         print(f"[-] Client sent ERROR {err['error_code']}: {err['msg']}")
                         return
 
-                    # accept ACK only if it matches the current sequence number
+                    # accept ack only if it matches the current sequence number
                     if p["type"] == MSG_ACK and p["ack"] == seq:
                         acked = True
                         break
 
-                # abort transfer if ACK is not received after all retries
+                # abort transfer if ack is not received after all retries
                 if not acked:
                     print("[-] MAX_RETRIES exceeded. Aborting transfer.")
                     send_timeout_abort(sock, client_addr, session_id)
                     return
 
-                # move to next sequence number
                 seq += 1
-                
-                # stop after sending the last chunk
+
                 if is_last:
                     break
 
-        # teardown: send FIN and wait for FIN_ACK
+        # for teardown: send fin and wait for fin_ack
         file_size = os.path.getsize(filepath)
         print(f"[File]     Sent '{os.path.basename(filepath)}' — {file_size} bytes to {client_addr}")
         print("[Teardown] File sent. Sending FIN...")
         fin_pkt = build_packet(MSG_FIN, session_id, 0, 0)
         
-        # retry FIN up to MAX_RETRIES times
         for attempt in range(1, MAX_RETRIES + 1):
             if VERBOSE:
                 print(f"    [SEND] Sending FIN, attempt {attempt}/{MAX_RETRIES}")
             sock.sendto(fin_pkt, client_addr)
             try:
-                # wait for FIN_ACK
                 raw, _ = sock.recvfrom(PACKET_SIZE)
                 p = parse_packet(raw)
 
-                # client may resend SYN if SYN_ACK was lost, reply with SYN_ACK again
+                # client may resend syn if syn_ack was lost, reply with syn_ack again
                 if p["type"] == MSG_SYN and p["session_id"] == 0:
                     sock.sendto(syn_ack_packet, client_addr)
                     continue
                 
-                # transfer is complete once matching FIN_ACK is received
+                # transfer is complete once matching fin_ack is received
                 if p["session_id"] == session_id and p["type"] == MSG_FIN_ACK:
                     print(f"[OK] Transfer complete. FIN_ACK received from {client_addr}.")
                     return
@@ -244,7 +246,6 @@ def server_send_file(sock, client_addr, session_id, isn, filepath, syn_ack_packe
         print("[-] Teardown timeout: No FIN_ACK received, but file was sent successfully.")
 
     except Exception as e:
-        # catch-all server-side failure during send path.
         print(f"[-] Internal error during send: {e}")
         err_pkt = build_packet(MSG_ERROR, session_id, 0, 0, build_err_payload(ERR_INTERNAL_ERROR, "Server fault"))
         sock.sendto(err_pkt, client_addr)
@@ -255,7 +256,6 @@ def server_receive_file(sock, client_addr, session_id, isn, filepath, syn_ack_pa
     last_acked = (isn - 1) & 0xFFFFFFFF  
 
     try:
-        # open file in binary write mode
         with open(filepath, "wb") as f:
             while True:
                 try:
@@ -265,6 +265,7 @@ def server_receive_file(sock, client_addr, session_id, isn, filepath, syn_ack_pa
                 except socket.timeout:
                     # timeout: client should retransmit
                     continue
+
                 except ValueError:
                     send_bad_request(sock, client_addr)
                     continue
@@ -288,39 +289,37 @@ def server_receive_file(sock, client_addr, session_id, isn, filepath, syn_ack_pa
                 if p["type"] == MSG_DATA:
                     seq = p["seq"]
                     
-                    # for in-order packet: write payload and ACK it
+                    # for in order packet: write payload and ack it
                     if seq == expected:
                         f.write(p["payload"])
                         last_acked = seq
                         expected += 1
                         send_ack(sock, client_addr, session_id, last_acked)
-                        # stop receiving once EOF flag is seen
+
                         if (p["flags"] & FLAG_EOF) != 0:
                             if VERBOSE:
                                 print(f"    [EOF] FLAG_EOF received at seq={seq}, stopping receive loop.")
                             break
                             
-                    # for duplicate packet: re-ACK last accepted sequence number
+                    # for duplicate packet: re-ack last accepted sequence number
                     elif seq < expected:
                         send_ack(sock, client_addr, session_id, last_acked)
                         
-                    # out of order packet: ignore payload and re-ACK last good packet
+                    # out of order packet: ignore payload and re-ack last good packet
                     else:
                         send_ack(sock, client_addr, session_id, last_acked)
 
-        # teardown: send FIN and wait for FIN_ACK
+        # for teardown: send fin and wait for fin_ack
         print("[Teardown] File received. Sending FIN...")
         file_size = os.path.getsize(filepath)
         print(f"[File]     Saved '{os.path.basename(filepath)}' — {file_size} bytes written to {SERVER_DIR}/")
         fin_pkt = build_packet(MSG_FIN, session_id, 0, 0)
         
-        # retry FIN up to 10 times
         for attempt in range(1, MAX_RETRIES + 1):
             if VERBOSE:
                 print(f"    [SEND] Sending FIN, attempt {attempt}/{MAX_RETRIES}")
             sock.sendto(fin_pkt, client_addr)
             try:
-                # wait for FIN_ACK
                 raw, _ = sock.recvfrom(PACKET_SIZE)
                 p = parse_packet(raw)
 
@@ -328,17 +327,18 @@ def server_receive_file(sock, client_addr, session_id, isn, filepath, syn_ack_pa
                     sock.sendto(syn_ack_packet, client_addr)
                     continue
 
-                # transfer is complete once matching FIN_ACK is received
+                # transfer is complete once matching fin_ack is received
                 if p["session_id"] == session_id and p["type"] == MSG_FIN_ACK:
                     print(f"[OK] Transfer complete. File saved as '{os.path.basename(filepath)}'.")
                     return
 
-                # if client retransmits last DATA (lost ACK), re-ACK it.
+                # if client retransmits lost ack, re-ack it
                 if p["session_id"] == session_id and p["type"] == MSG_DATA:
                     send_ack(sock, client_addr, session_id, last_acked)
 
             except (socket.timeout, OSError):
-                continue  # timeout waiting for FIN_ACK then resend FIN.
+                continue  # timeout waiting for fin_ack then resend fin
+
             except ValueError:
                 send_bad_request(sock, client_addr)
                 continue
@@ -346,7 +346,6 @@ def server_receive_file(sock, client_addr, session_id, isn, filepath, syn_ack_pa
         print("[-] Teardown timeout: No FIN_ACK received, but file was saved successfully.")
 
     except Exception as e:
-        # catch-all server-side failure during receive path.
         print(f"[-] Internal error during receive: {e}")
         err_pkt = build_packet(MSG_ERROR, session_id, 0, 0, build_err_payload(ERR_INTERNAL_ERROR, "Server fault"))
         sock.sendto(err_pkt, client_addr)
