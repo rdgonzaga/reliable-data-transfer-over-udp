@@ -216,8 +216,27 @@ def main():
         print("[ERROR] Port must be an integer.")
         return
 
-    print(f"\nConnecting to {ip}:{port}...\n")
-    print("[OK] Connected.\n")
+    # probe socket
+    probe_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+    print(f"Connecting to {ip}:{port}...")
+    
+    # dummy handshake
+    try:
+        # MSG_SYN with op=0xFF (or any undefined op) just to get a response
+        # NOTE that there will be no error printed in the client terminal here as all the error handling
+        # is built into the get and put functions.
+        # This is purely for probing and testing if the server is alive.
+        syn_pkt = build_packet(MSG_SYN, 0, 0, 0, build_syn_payload(0x00, 1024, "PING"))
+        probe_sock.sendto(syn_pkt, (ip, port))
+        data, addr = probe_sock.recvfrom(PACKET_SIZE)           # wait for any reply
+        print("[OK] Connected.\n")
+    except Exception as e:
+        print(f"[ERROR] Connection failed: {e} (Is the server running?)")
+        return
+    finally:
+        probe_sock.close()
+
     _print_help()
 
     while True:
