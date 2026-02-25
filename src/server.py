@@ -4,7 +4,7 @@ import random
 import time
 from protocol import *
 
-VERBOSE = True
+VERBOSE = False  
 
 SERVER_DIR = "server_files"
 if not os.path.exists(SERVER_DIR):
@@ -43,10 +43,12 @@ def generate_session_id():
             return session_id
 
 def start_server():
+    global VERBOSE
     print("Server startup:")
     print("    1. Localhost only (127.0.0.1)")
     print("    2. Local Network (0.0.0.0)")
     choice = input("Select binding mode (1 or 2): ").strip()
+    VERBOSE = input("Enable verbose logging? (y/n): ").strip().lower() == 'y'
     
     # bind to all network interfaces for LAN access, or loopback for local-only access
     bind_ip = '0.0.0.0' if choice == '2' else '127.0.0.1'
@@ -159,7 +161,7 @@ def server_send_file(sock, client_addr, session_id, isn, filepath, syn_ack_packe
                 # retry send ACK up to 10 times
                 for attempt in range(1, MAX_RETRIES + 1):
                     if VERBOSE:
-                        print(f"    [Retry] Sending DATA seq={seq}, attempt {attempt}/{MAX_RETRIES}")
+                        print(f"    [SEND] Sending DATA seq={seq}, attempt {attempt}/{MAX_RETRIES}")
                     sock.sendto(data_pkt, client_addr)
                     try:
                         # wait for ACK
@@ -168,7 +170,7 @@ def server_send_file(sock, client_addr, session_id, isn, filepath, syn_ack_packe
                     except socket.timeout:
                         # if timeout: retransmit current DATA packet
                         if VERBOSE:
-                            print(f"    [Retry] Timeout on seq={seq}, retransmitting...")
+                            print(f"    [RETRY] Timeout on seq={seq}, retransmitting...")
                         continue 
                     except ValueError:
                         send_bad_request(sock, client_addr)
@@ -217,7 +219,7 @@ def server_send_file(sock, client_addr, session_id, isn, filepath, syn_ack_packe
         # retry FIN up to MAX_RETRIES times
         for attempt in range(1, MAX_RETRIES + 1):
             if VERBOSE:
-                print(f"    [Retry] Sending FIN, attempt {attempt}/{MAX_RETRIES}")
+                print(f"    [SEND] Sending FIN, attempt {attempt}/{MAX_RETRIES}")
             sock.sendto(fin_pkt, client_addr)
             try:
                 # wait for FIN_ACK
@@ -315,7 +317,7 @@ def server_receive_file(sock, client_addr, session_id, isn, filepath, syn_ack_pa
         # retry FIN up to 10 times
         for attempt in range(1, MAX_RETRIES + 1):
             if VERBOSE:
-                print(f"    [Retry] Sending FIN, attempt {attempt}/{MAX_RETRIES}")
+                print(f"    [SEND] Sending FIN, attempt {attempt}/{MAX_RETRIES}")
             sock.sendto(fin_pkt, client_addr)
             try:
                 # wait for FIN_ACK
