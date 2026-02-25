@@ -4,6 +4,8 @@ import random
 import time
 from protocol import *
 
+VERBOSE = True
+
 SERVER_DIR = "server_files"
 if not os.path.exists(SERVER_DIR):
     os.makedirs(SERVER_DIR)
@@ -103,6 +105,9 @@ def start_server():
                 # send SYN_ACK once, then the client will retransmit SYN on timeout
                 sock.sendto(syn_ack_packet, client_addr)
                 print(f"[+] Sent SYN_ACK. Session: {session_id}, ISN: {isn}")
+                if VERBOSE:
+                    print(f"    [Handshake] Op={'PUT' if op == 1 else 'GET'}, ChunkSize={PAYLOAD_SIZE}B, ISN={isn}")
+                    print(f"    [Session]   ID={session_id}, active_sessions={active_sessions}")
 
                 # transfer state
                 sock.settimeout(TIMEOUT)
@@ -118,6 +123,8 @@ def start_server():
                     send_timeout_abort(sock, client_addr, session_id)
 
                 active_sessions.discard(session_id)
+                if VERBOSE:
+                    print(f"    [Session]   {session_id} removed. Active sessions remaining: {len(active_sessions)}")
                 sock.settimeout(None)  # reset to blocking mode for the next client
 
     finally:
@@ -143,6 +150,8 @@ def server_send_file(sock, client_addr, session_id, isn, filepath, syn_ack_packe
 
                 # build DATA packet and mark EOF on the final chunk
                 flags = FLAG_EOF if is_last else FLAG_NONE
+                if VERBOSE and is_last:
+                    print(f"    [EOF] Final chunk at seq={seq}, FLAG_EOF set.")
                 data_pkt = build_packet(MSG_DATA, session_id, seq, 0, chunk, flags=flags)
 
                 # stop and wait logic: send one DATA packet and wait for matching ACK
@@ -196,6 +205,8 @@ def server_send_file(sock, client_addr, session_id, isn, filepath, syn_ack_packe
                     break
 
         # teardown: send FIN and wait for FIN_ACK
+        file_size = os.path.getsize(filepath)
+        print(f"[File]     Sent '{os.path.basename(filepath)}' — {file_size} bytes to {client_addr}")
         print("[Teardown] File sent. Sending FIN...")
         fin_pkt = build_packet(MSG_FIN, session_id, 0, 0)
         
@@ -277,6 +288,8 @@ def server_receive_file(sock, client_addr, session_id, isn, filepath, syn_ack_pa
                         send_ack(sock, client_addr, session_id, last_acked)
                         # stop receiving once EOF flag is seen
                         if (p["flags"] & FLAG_EOF) != 0:
+                            if VERBOSE:
+                                print(f"    [EOF] FLAG_EOF received at seq={seq}, stopping receive loop.")
                             break
                             
                     # for duplicate packet: re-ACK last accepted sequence number
@@ -289,6 +302,8 @@ def server_receive_file(sock, client_addr, session_id, isn, filepath, syn_ack_pa
 
         # teardown: send FIN and wait for FIN_ACK
         print("[Teardown] File received. Sending FIN...")
+        file_size = os.path.getsize(filepath)
+        print(f"[File]     Saved '{os.path.basename(filepath)}' — {file_size} bytes written to {SERVER_DIR}/")
         fin_pkt = build_packet(MSG_FIN, session_id, 0, 0)
         
         # retry FIN up to 10 times
