@@ -97,6 +97,8 @@ def start_server():
                     continue  # drop malformed SYN payloads
 
                 op = syn_data['op']
+                requested_chunk = syn_data['chunk_size']
+                chosen_chunk = min(PAYLOAD_SIZE, requested_chunk) if requested_chunk > 0 else PAYLOAD_SIZE
                 
                 safe_filename = os.path.basename(syn_data['filename'])
                 filepath = os.path.join(SERVER_DIR, safe_filename)
@@ -116,21 +118,21 @@ def start_server():
                 isn = int(time.time()) % (2**32)  
                 active_sessions.add(session_id)
 
-                syn_ack_payload = build_syn_ack_payload(0x00, PAYLOAD_SIZE, isn)
+                syn_ack_payload = build_syn_ack_payload(0x00, chosen_chunk, isn)
                 syn_ack_packet = build_packet(MSG_SYN_ACK, session_id, 0, 0, syn_ack_payload)
 
                 # send SYN_ACK once, then the client will retransmit SYN on timeout
                 sock.sendto(syn_ack_packet, client_addr)
                 print(f"[+] Sent SYN_ACK. Session: {session_id}, ISN: {isn}")
                 if VERBOSE:
-                    print(f"    [Handshake] Op={'PUT' if op == 1 else 'GET'}, ChunkSize={PAYLOAD_SIZE}B, ISN={isn}")
+                    print(f"    [Handshake] Op={'PUT' if op == 1 else 'GET'}, ChunkSize={chosen_chunk}B, ISN={isn}")
                     print(f"    [Session]   ID={session_id}, active_sessions={active_sessions}")
 
                 # transfer state
                 sock.settimeout(TIMEOUT)
                 try:
                     if op == 0:
-                        server_send_file(sock, client_addr, session_id, isn, filepath, syn_ack_packet)
+                        server_send_file(sock, client_addr, session_id, isn, filepath, syn_ack_packet, chosen_chunk)
                     elif op == 1:
                         server_receive_file(sock, client_addr, session_id, isn, filepath, syn_ack_packet)
                 except socket.timeout:
@@ -145,14 +147,14 @@ def start_server():
     finally:
         sock.close()
 
-def server_send_file(sock, client_addr, session_id, isn, filepath, syn_ack_packet: bytes):
+def server_send_file(sock, client_addr, session_id, isn, filepath, syn_ack_packet: bytes, chunk_size: int):
     print(f"[Transfer] Sending '{os.path.basename(filepath)}' to {client_addr}...")
     seq = isn
 
     try:
         with open(filepath, "rb") as f:
             while True:
-                chunk = f.read(PAYLOAD_SIZE)
+                chunk = f.read(chunk_size)
                 
                 # peek ahead to detect whether the next chunk is the last one
                 pos = f.tell()
