@@ -7,6 +7,7 @@
 import socket
 import os
 import random
+import time
 from protocol import *
 
 # SERVER_ADDR = ('127.0.0.1', 8080)
@@ -80,7 +81,7 @@ def start_server():
 
                 # handshake state — generate unique session_id and ISN
                 session_id = generate_session_id()
-                isn = random.randint(0, 2**32 - 1)
+                isn = int(time.time()) % (2**32)    # time based ISN (based off of TCP)
                 active_sessions.add(session_id)
 
                 syn_ack_payload = build_syn_ack_payload(0x00, PAYLOAD_SIZE, isn)
