@@ -24,9 +24,9 @@ def generate_session_id():
             return session_id
 
 def start_server():
-    print("--- Server Startup ---")
-    print("1. Localhost only (127.0.0.1)")
-    print("2. Network (0.0.0.0 - accessible to other devices)")
+    print("Server startup:")
+    print("    1. Localhost only (127.0.0.1)")
+    print("    2. Local Network (0.0.0.0)")
     choice = input("Select binding mode (1 or 2): ").strip()
     
     bind_ip = '0.0.0.0' if choice == '2' else '127.0.0.1'
