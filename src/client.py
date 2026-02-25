@@ -200,8 +200,8 @@ def client_put(server_ip: str, port: int, local_path: str, remote_name: str, pro
 
 def _print_help():
     print("Type commands like:\n")
-    print("    get <filename> [chunk]\n")                               # download from server
-    print("    put <filename> [chunk]\n")                               # upload to server
+    print("    get <filename>\n")                               # download from server
+    print("    put <filename>\n")                               # upload to server
     print("    quit\n")
     print("Type 'help' to show commands again.\n")
 
