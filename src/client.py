@@ -76,9 +76,6 @@ def client_get(server_ip: str, port: int, remote_name: str, out_path: str, propo
                 # server should handle its own retransmission timer.
                 continue
             
-            # TODO: ADDRESS PROPER ERROR HANDLING
-            # SESSION_MISMATCH and,
-            # TIMEOUT_ABORT
             if p["type"] == MSG_ERROR:
                 err = parse_err_payload(p["payload"])
                 raise RuntimeError(f"Server ERROR {err['error_code']}: {err['msg']}")
