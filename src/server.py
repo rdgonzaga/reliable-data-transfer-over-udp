@@ -138,8 +138,12 @@ def server_send_file(sock, client_addr, session_id, isn, filepath, syn_ack_packe
                         continue
 
                     # drop packets that is not for this transfer
+                    # changed: send best effort ERROR + abort as per RFC
                     if p["session_id"] != session_id:
-                        continue
+                        err_pkt = build_packet(MSG_ERROR, p["session_id"], 0, 0,
+                                            build_err_payload(ERR_SESSION_MISMATCH, "SESSION_MISMATCH"))
+                        sock.sendto(err_pkt, client_addr)
+                        return
 
                     # if client has an error, show error
                     if p["type"] == MSG_ERROR:
@@ -228,8 +232,12 @@ def server_receive_file(sock, client_addr, session_id, isn, filepath, syn_ack_pa
                     continue
 
                 # drop packets that is not for this transfer
+                # changed: send best effort ERROR + abort as per RFC
                 if p["session_id"] != session_id:
-                    continue
+                    err_pkt = build_packet(MSG_ERROR, p["session_id"], 0, 0,
+                                        build_err_payload(ERR_SESSION_MISMATCH, "SESSION_MISMATCH"))
+                    sock.sendto(err_pkt, client_addr)
+                    return
 
                 # if client has an error, show error
                 if p["type"] == MSG_ERROR:
