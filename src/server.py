@@ -99,6 +99,11 @@ def start_server():
                 op = syn_data['op']
                 requested_chunk = syn_data['chunk_size']
                 chosen_chunk = min(PAYLOAD_SIZE, requested_chunk) if requested_chunk > 0 else PAYLOAD_SIZE
+
+                if op not in (0, 1):
+                    print(f"[-] Invalid OP code '{op}' from {client_addr}. Sending BAD_REQUEST.")
+                    send_bad_request(sock, client_addr)
+                    continue
                 
                 safe_filename = os.path.basename(syn_data['filename'])
                 filepath = os.path.join(SERVER_DIR, safe_filename)
