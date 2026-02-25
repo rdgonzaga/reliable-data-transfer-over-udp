@@ -36,7 +36,12 @@ def start_server():
             try:
                 parsed = parse_packet(packet)
             except ValueError:
-                continue  # drop corrupted / too small na packets
+                # continue  # drop corrupted / too small na packets
+                # best effort BAD_REQUEST error, session_id unknown -> use 0
+                err_payload = build_err_payload(ERR_BAD_REQUEST, "BAD_REQUEST")
+                err_pkt = build_packet(MSG_ERROR, 0, 0, 0, err_payload)
+                sock.sendto(err_pkt, client_addr)
+                continue
 
             if parsed['type'] == MSG_SYN and parsed['session_id'] == 0:
                 try:
@@ -128,8 +133,13 @@ def server_send_file(sock, client_addr, session_id, isn, filepath, syn_ack_packe
                         # if nagtime out, loop back and retransmit
                         continue 
                     except ValueError:
-                        # if may error yung parse packet, like too short or corrupted, drop it
-                        continue 
+                        # # if may error yung parse packet, like too short or corrupted, drop it
+                        # continue 
+                        # best effort BAD_REQUEST error, session_id unknown -> use 0
+                        err_payload = build_err_payload(ERR_BAD_REQUEST, "BAD_REQUEST")
+                        err_pkt = build_packet(MSG_ERROR, 0, 0, 0, err_payload)
+                        sock.sendto(err_pkt, client_addr)
+                        continue
 
                     # client may still resend SYN if SYN_ACK was dropped
                     # keep resending SYN_ACK during teardown so the client can sync
@@ -193,8 +203,15 @@ def server_send_file(sock, client_addr, session_id, isn, filepath, syn_ack_packe
                 if p["session_id"] == session_id and p["type"] == MSG_FIN_ACK:
                     print(f"[OK] Transfer complete. FIN_ACK received from {client_addr}.")
                     return
-            except (socket.timeout, ValueError, OSError):
+            except (socket.timeout, OSError):
                 continue 
+            except ValueError:
+                # best effort BAD_REQUEST error, session_id unknown -> use 0
+                err_payload = build_err_payload(ERR_BAD_REQUEST, "BAD_REQUEST")
+                err_pkt = build_packet(MSG_ERROR, 0, 0, 0, err_payload)
+                sock.sendto(err_pkt, client_addr)
+                continue
+
                 
         # if it looped 10 times but never get a fin_ack, just print a warning since sent na yung file
         print("[-] Teardown timeout: No FIN_ACK received, but file was sent successfully.")
@@ -222,7 +239,12 @@ def server_receive_file(sock, client_addr, session_id, isn, filepath, syn_ack_pa
                     # if nagtime out, do no thing, client dapat magreretransmit
                     continue
                 except ValueError:
-                    # if may error yung parse packet, like too short or corrupted, drop it
+                    # # if may error yung parse packet, like too short or corrupted, drop it
+                    # continue
+                    # best effort BAD_REQUEST error, session_id unknown -> use 0
+                    err_payload = build_err_payload(ERR_BAD_REQUEST, "BAD_REQUEST")
+                    err_pkt = build_packet(MSG_ERROR, 0, 0, 0, err_payload)
+                    sock.sendto(err_pkt, client_addr)
                     continue
 
                 # client may still resend SYN if SYN_ACK was dropped
@@ -305,8 +327,15 @@ def server_receive_file(sock, client_addr, session_id, isn, filepath, syn_ack_pa
                     ack_pkt = build_packet(MSG_ACK, session_id, 0, last_acked)
                     sock.sendto(ack_pkt, client_addr)
 
-            except (socket.timeout, ValueError, OSError):
+            except (socket.timeout, OSError):
                 continue # if we timeout waiting for FIN_ACK, loop back and resend the FIN
+            except ValueError:
+                # best effort BAD_REQUEST error, session_id unknown -> use 0
+                err_payload = build_err_payload(ERR_BAD_REQUEST, "BAD_REQUEST")
+                err_pkt = build_packet(MSG_ERROR, 0, 0, 0, err_payload)
+                sock.sendto(err_pkt, client_addr)
+                continue
+
 
         # if it looped 10 times but never get a fin_ack, just print a warning since saved na yung file
         print("[-] Teardown timeout: No FIN_ACK received, but file was saved successfully.")
